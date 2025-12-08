@@ -16,10 +16,12 @@ admin.initializeApp({
 const app = express();
 // middleware
 app.use(express.json());
-app.use(cors({
-  origin: "http://localhost:5173", 
-  credentials: true,
-}));
+app.use(
+  cors({
+    origin: "http://localhost:5173",
+    credentials: true,
+  })
+);
 
 // jwt middlewares
 const verifyJWT = async (req, res, next) => {
@@ -49,13 +51,22 @@ async function run() {
   try {
     const db = client.db("AssetsVerse");
     const userCollection = db.collection("users");
+    const assetCollection = db.collection("assets");
 
-    // user releted API
-    // post user info to database
+    //----------------- user related API-----------------------
+    // post /users
     app.post("/users", async (req, res) => {
       const userInfo = req.body;
       const result = await userCollection.insertOne(userInfo);
       res.send(result);
+    });
+
+    //----------------- asset related API-----------------------
+    // POST /assets
+    app.post("/assets", verifyJWT, async (req, res) => {
+      const assetInfo = req.body;
+      const result = await assetCollection.insertOne(assetInfo);
+      return res.send(result);
     });
 
     // Send a ping to confirm a successful connection
