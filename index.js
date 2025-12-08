@@ -15,8 +15,11 @@ admin.initializeApp({
 
 const app = express();
 // middleware
-app.use(cors());
 app.use(express.json());
+app.use(cors({
+  origin: "http://localhost:5173", 
+  credentials: true,
+}));
 
 // jwt middlewares
 const verifyJWT = async (req, res, next) => {
@@ -45,7 +48,15 @@ const client = new MongoClient(process.env.MONGODB_URI, {
 async function run() {
   try {
     const db = client.db("AssetsVerse");
-    const userCollection = db.collections("users");
+    const userCollection = db.collection("users");
+
+    // user releted API
+    // post user info to database
+    app.post("/users", async (req, res) => {
+      const userInfo = req.body;
+      const result = await userCollection.insertOne(userInfo);
+      res.send(result);
+    });
 
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
@@ -59,7 +70,7 @@ async function run() {
 run().catch(console.dir);
 
 app.get("/", (req, res) => {
-  res.send("Hello from Server..");
+  res.send("AssetsVerse is running.....");
 });
 
 app.listen(port, () => {
