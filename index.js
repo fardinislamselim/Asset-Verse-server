@@ -61,6 +61,13 @@ async function run() {
       res.send(result);
     });
 
+    app.get("/user", verifyJWT, async (req, res) => {
+      const query = { email: req.tokenEmail };
+      const user = await userCollection.findOne(query);
+      res.send(user);
+    });
+
+    
     //----------------- asset related API-----------------------
     // POST /assets
     app.post("/assets", verifyJWT, async (req, res) => {
