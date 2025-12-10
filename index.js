@@ -35,7 +35,20 @@ const verifyJWT = async (req, res, next) => {
     next();
   } catch (err) {
     console.log(err);
-    return res.status(401).send({ message: "Unauthorized Access!", err });
+    return res.status(401).send({ message: "Unauthorized Access!" });
+  }
+};
+
+// Optional: HR-only middleware
+const verifyHR = async (req, res, next) => {
+  try {
+    const userDoc = await db.collection("users").findOne({ email: req.user.email });
+    if (userDoc?.role !== "hr") {
+      return res.status(403).json({ message: "HR access only" });
+    }
+    next();
+  } catch (err) {
+    res.status(403).json({ message: "Forbidden" });
   }
 };
 
@@ -47,6 +60,7 @@ const client = new MongoClient(process.env.MONGODB_URI, {
     deprecationErrors: true,
   },
 });
+
 async function run() {
   try {
     const db = client.db("AssetsVerse");
@@ -61,20 +75,37 @@ async function run() {
       res.send(result);
     });
 
+    // get /single user
     app.get("/user", verifyJWT, async (req, res) => {
       const query = { email: req.tokenEmail };
       const user = await userCollection.findOne(query);
       res.send(user);
     });
 
-    
-    //----------------- asset related API-----------------------
+    //----------------- asset related API -----------------------
     // POST /assets
     app.post("/assets", verifyJWT, async (req, res) => {
       const assetInfo = req.body;
       const result = await assetCollection.insertOne(assetInfo);
       return res.send(result);
     });
+
+// GET → All assets of logged HR + search
+app.get("/assets", verifyJWT, async (req, res) => {
+  const user = await userCollection.findOne({ email: req.tokenEmail });
+  if (user?.role !== "hr") return res.status(403).send({ message: "HR only" });
+
+  const search = req.query.search || "";
+  const assets = await assetCollection
+    .find({
+      hrEmail: req.tokenEmail,
+      productName: { $regex: search, $options: "i" },
+    })
+    .sort({ createdAt: -1 })
+    .toArray();
+
+  res.send(assets);
+});
 
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
