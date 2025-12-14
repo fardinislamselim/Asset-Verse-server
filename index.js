@@ -39,7 +39,7 @@ const verifyJWT = async (req, res, next) => {
 
   try {
     const decoded = await admin.auth().verifyIdToken(token);
-    req.user = decoded; // email, uid, etc.
+    req.user = decoded;
     next();
   } catch (err) {
     return res.status(401).json({ message: "Invalid or expired token" });
@@ -84,6 +84,7 @@ async function run() {
     const employeeAffiliationsCollection = db.collection(
       "employeeAffiliations"
     );
+    const packagesCollection = db.collection("packages");
 
     // ==================== USER APIs ====================
 
@@ -394,6 +395,17 @@ async function run() {
       } catch (err) {
         res.status(500).send({ message: "Return failed" });
       }
+    });
+
+    //======================= PACKAGE APIs ====================
+    // GET → All available packages
+    app.get("/packages", async (req, res) => {
+      const packages = await packagesCollection
+        .find({})
+        .sort({ price: 1 })
+        .toArray();
+
+      res.send(packages);
     });
 
     // ------
