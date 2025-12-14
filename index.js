@@ -343,7 +343,6 @@ async function run() {
       res.send({ message: "Request rejected" });
     });
 
-
     // ==================assigned assets related APIs ==================
     // GET → All assigned assets for logged-in employee (from all companies)
     app.get("/my-assets", verifyJWT, async (req, res) => {
@@ -358,6 +357,43 @@ async function run() {
         .toArray();
 
       res.send(assets);
+    });
+
+    // PATCH → Employee returns a returnable asset
+    app.patch("/assigned-assets/:id/return", verifyJWT, async (req, res) => {
+      const assignedId = req.params.id;
+      const employeeEmail = req.user.email;
+
+      try {
+        // Find the assigned asset
+        const assigned = await assignedAssetsCollection.findOne({
+          _id: new ObjectId(assignedId),
+          employeeEmail,
+          status: "assigned",
+          assetType: "Returnable",
+        });
+
+        // Update status to returned
+        await assignedAssetsCollection.updateOne(
+          { _id: new ObjectId(assignedId) },
+          {
+            $set: {
+              status: "returned",
+              returnDate: new Date(),
+            },
+          }
+        );
+
+        // Increment availableQuantity back in assets collection
+        await assetCollection.updateOne(
+          { _id: new ObjectId(assigned.assetId) },
+          { $inc: { availableQuantity: 1 } }
+        );
+
+        res.send({ message: "Asset returned successfully" });
+      } catch (err) {
+        res.status(500).send({ message: "Return failed" });
+      }
     });
 
     // ------
