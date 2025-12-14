@@ -81,7 +81,9 @@ async function run() {
     const assetCollection = db.collection("assets");
     const requestCollection = db.collection("requests");
     const assignedAssetsCollection = db.collection("assignedAssets");
-    const employeeAffiliationsCollection = db.collection("employeeAffiliations");
+    const employeeAffiliationsCollection = db.collection(
+      "employeeAffiliations"
+    );
 
     // ==================== USER APIs ====================
 
@@ -224,10 +226,10 @@ async function run() {
 
     // GET → All pending requests for logged-in HR
     app.get("/requests", verifyJWT, verifyHR, async (req, res) => {
-      const hrEmail = req.tokenEmail;
+      const hrEmail = req.user.email;
 
       const requests = await requestCollection
-        .find({ hrEmail, requestStatus: "pending" })
+        .find({ hrEmail: hrEmail, requestStatus: "pending" })
         .sort({ requestDate: -1 })
         .toArray();
 
@@ -241,7 +243,7 @@ async function run() {
       verifyHR,
       async (req, res) => {
         const requestId = req.params.id;
-        const hrEmail = req.tokenEmail;
+        const hrEmail = req.user.email;
 
         try {
           const request = await requestCollection.findOne({
@@ -266,7 +268,7 @@ async function run() {
             { $inc: { availableQuantity: -1 } }
           );
 
-          //  Create assigned Assets 
+          //  Create assigned Assets
           await assignedAssetsCollection.insertOne({
             assetId: request.assetId,
             assetName: request.assetName,
@@ -281,11 +283,10 @@ async function run() {
           });
 
           //Check if first affiliation → create employeeAffiliations
-          const existingAff = await employeeAffiliationsCollection
-            .findOne({
-              employeeEmail: request.requesterEmail,
-              hrEmail,
-            });
+          const existingAff = await employeeAffiliationsCollection.findOne({
+            employeeEmail: request.requesterEmail,
+            hrEmail,
+          });
 
           if (!existingAff) {
             await employeeAffiliationsCollection.insertOne({
@@ -309,7 +310,7 @@ async function run() {
           await requestCollection.updateOne(
             { _id: new ObjectId(requestId) },
             { $set: { requestStatus: "approved", approvalDate: new Date() } }
-            );
+          );
 
           res.send({ message: "Request approved successfully" });
         } catch (err) {
@@ -318,6 +319,29 @@ async function run() {
         }
       }
     );
+
+    // PATCH → Reject request
+    app.patch("/requests/:id/reject", verifyJWT, verifyHR, async (req, res) => {
+      const requestId = req.params.id;
+      const hrEmail = req.user.email;
+
+      const result = await requestCollection.updateOne(
+        {
+          _id: new ObjectId(requestId),
+          hrEmail,
+          requestStatus: "pending",
+        },
+        { $set: { requestStatus: "rejected", rejectionDate: new Date() } }
+      );
+
+      if (result.modifiedCount === 0) {
+        return res
+          .status(404)
+          .send({ message: "Request not found or already processed" });
+      }
+
+      res.send({ message: "Request rejected" });
+    });
 
     // ------
   } catch (error) {
