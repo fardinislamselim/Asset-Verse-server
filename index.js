@@ -79,6 +79,7 @@ async function run() {
 
     const userCollection = db.collection("users");
     const assetCollection = db.collection("assets");
+    const requestCollection = db.collection("requests");
 
     // ==================== USER APIs ====================
 
@@ -188,7 +189,36 @@ async function run() {
       }
     });
 
-    
+    // POST → Employee creates asset request
+    app.post("/requests", verifyJWT, async (req, res) => {
+      const {
+        assetId,
+        assetName,
+        assetType,
+        companyName,
+        hrEmail,
+        note,
+        requesterName,
+        requesterEmail,
+      } = req.body;
+
+      const newRequest = {
+        assetId,
+        assetName,
+        assetType,
+        companyName,
+        hrEmail,
+        requesterEmail,
+        requesterName,
+        note: note || "",
+        requestDate: new Date(),
+        requestStatus: "pending",
+      };
+
+      const result = await requestCollection.insertOne(newRequest);
+      res.status(201).send(result);
+    });
+
     // ------
   } catch (error) {
     console.error("MongoDB connection failed:", error);
