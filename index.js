@@ -189,6 +189,7 @@ async function run() {
       }
     });
 
+    // ==================== REQUEST APIs ====================
     // POST → Employee creates asset request
     app.post("/requests", verifyJWT, async (req, res) => {
       const {
@@ -217,6 +218,18 @@ async function run() {
 
       const result = await requestCollection.insertOne(newRequest);
       res.status(201).send(result);
+    });
+
+    // GET → All pending requests for logged-in HR
+    app.get("/requests", verifyJWT, verifyHR, async (req, res) => {
+      const hrEmail = req.tokenEmail;
+
+      const requests = await requestCollection
+        .find({ hrEmail, requestStatus: "pending" })
+        .sort({ requestDate: -1 })
+        .toArray();
+
+      res.send(requests);
     });
 
     // ------
