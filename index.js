@@ -80,6 +80,8 @@ async function run() {
     const userCollection = db.collection("users");
     const assetCollection = db.collection("assets");
     const requestCollection = db.collection("requests");
+    const assignedAssetsCollection = db.collection("assignedAssets");
+    const employeeAffiliationsCollection = db.collection("employeeAffiliations");
 
     // ==================== USER APIs ====================
 
@@ -231,6 +233,91 @@ async function run() {
 
       res.send(requests);
     });
+
+    // PATCH → Approve request
+    app.patch(
+      "/requests/:id/approve",
+      verifyJWT,
+      verifyHR,
+      async (req, res) => {
+        const requestId = req.params.id;
+        const hrEmail = req.tokenEmail;
+
+        try {
+          const request = await requestCollection.findOne({
+            _id: new ObjectId(requestId),
+            hrEmail,
+            requestStatus: "pending",
+          });
+          if (!request)
+            return res.status(404).send({ message: "Request not found" });
+
+          const asset = await assetCollection.findOne({
+            _id: new ObjectId(request.assetId),
+          });
+          if (asset.availableQuantity <= 0) {
+            return res
+              .status(400)
+              .send({ message: "Asset no longer available" });
+          }
+
+          await assetCollection.updateOne(
+            { _id: new ObjectId(request.assetId) },
+            { $inc: { availableQuantity: -1 } }
+          );
+
+          //  Create assigned Assets 
+          await assignedAssetsCollection.insertOne({
+            assetId: request.assetId,
+            assetName: request.assetName,
+            assetImage: asset.productImage,
+            assetType: request.assetType,
+            employeeEmail: request.requesterEmail,
+            employeeName: request.requesterName,
+            hrEmail,
+            companyName: request.companyName,
+            assignmentDate: new Date(),
+            status: "assigned",
+          });
+
+          //Check if first affiliation → create employeeAffiliations
+          const existingAff = await employeeAffiliationsCollection
+            .findOne({
+              employeeEmail: request.requesterEmail,
+              hrEmail,
+            });
+
+          if (!existingAff) {
+            await employeeAffiliationsCollection.insertOne({
+              employeeEmail: request.requesterEmail,
+              employeeName: request.requesterName,
+              hrEmail,
+              companyName: request.companyName,
+              companyLogo: req.hrUser.companyLogo || "",
+              affiliationDate: new Date(),
+              status: "active",
+            });
+
+            // Increase currentEmployees count in users collection
+            await userCollection.updateOne(
+              { email: hrEmail },
+              { $inc: { currentEmployees: 1 } }
+            );
+          }
+
+          // Update request status to approved
+          await requestCollection.updateOne(
+            { _id: new ObjectId(requestId) },
+            { $set: { requestStatus: "approved", approvalDate: new Date() } }
+            );
+
+          res.send({ message: "Request approved successfully" });
+        } catch (err) {
+          console.error(err);
+          res.status(500).send({ message: "Approval failed" });
+        }
+      }
+    );
 
     // ------
   } catch (error) {
