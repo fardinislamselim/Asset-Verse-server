@@ -81,6 +81,8 @@ async function run() {
     const assetCollection = db.collection("assets");
 
     // ==================== USER APIs ====================
+
+    //  POST → Add User
     app.post("/users", async (req, res) => {
       const user = req.body;
       const existing = await userCollection.findOne({ email: user.email });
@@ -113,7 +115,7 @@ async function run() {
       res.send(result);
     });
 
-    // GET → All assets + search
+    // GET → All assets for HR + search
     app.get("/assets", verifyJWT, verifyHR, async (req, res) => {
       const search = req.query.search || "";
       const assets = await assetCollection
@@ -164,6 +166,30 @@ async function run() {
       }
       res.send({ message: "Asset deleted" });
     });
+
+    // GET → All available assets across all companies (quantity > 0)
+    app.get("/available-assets", verifyJWT, async (req, res) => {
+      try {
+        const assets = await assetCollection
+          .find({ availableQuantity: { $gt: 0 } })
+          .project({
+            productName: 1,
+            productImage: 1,
+            productType: 1,
+            availableQuantity: 1,
+            companyName: 1,
+            hrEmail: 1,
+          })
+          .toArray();
+
+        res.send(assets);
+      } catch (err) {
+        res.status(500).send({ message: "Failed to load assets" });
+      }
+    });
+
+    
+    // ------
   } catch (error) {
     console.error("MongoDB connection failed:", error);
   }
