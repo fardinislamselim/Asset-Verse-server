@@ -343,6 +343,23 @@ async function run() {
       res.send({ message: "Request rejected" });
     });
 
+
+    // ==================assigned assets related APIs ==================
+    // GET → All assigned assets for logged-in employee (from all companies)
+    app.get("/my-assets", verifyJWT, async (req, res) => {
+      const employeeEmail = req.user.email;
+
+      const assets = await assignedAssetsCollection
+        .find({
+          employeeEmail,
+          status: "assigned",
+        })
+        .sort({ assignmentDate: -1 })
+        .toArray();
+
+      res.send(assets);
+    });
+
     // ------
   } catch (error) {
     console.error("MongoDB connection failed:", error);
