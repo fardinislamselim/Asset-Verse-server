@@ -47,7 +47,7 @@ const verifyJWT = async (req, res, next) => {
   }
 };
 
-// HR-only middleware 
+// HR-only middleware
 const verifyHR = async (req, res, next) => {
   try {
     const user = await db
@@ -123,6 +123,80 @@ async function run() {
       res.send(result);
     });
 
+    // GET → All affiliated employees for logged-in HR
+    app.get("/my-employees", verifyJWT, verifyHR, async (req, res) => {
+      const hrEmail = req.user.email;
+
+      const employees = await employeeAffiliationsCollection
+        .find({ hrEmail, status: "active" })
+        .sort({ affiliationDate: -1 })
+        .toArray();
+
+      const employeesWithCount = await Promise.all(
+        employees.map(async (emp) => {
+          const count = await assignedAssetsCollection.countDocuments({
+            employeeEmail: emp.employeeEmail,
+            status: "assigned",
+          });
+
+          return {
+            ...emp,
+            assignedAssetsCount: count,
+          };
+        })
+      );
+
+      res.send(employeesWithCount);
+    });
+
+    // DELETE → Remove employee from team (HR only)
+    app.delete(
+      "/employee-affiliations/:email",
+      verifyJWT,
+      verifyHR,
+      async (req, res) => {
+        const employeeEmail = req.params.email;
+        const hrEmail = req.user.email;
+
+        try {
+          await employeeAffiliationsCollection
+            .updateOne(
+              { employeeEmail, hrEmail },
+              { $set: { status: "inactive" } }
+            );
+
+          await assignedAssetsCollection.updateMany(
+            { employeeEmail, hrEmail, status: "assigned" },
+            {
+              $set: { status: "returned", returnDate: new Date() },
+              $inc: { availableQuantity: 1 },
+            }
+          );
+
+          const returnedAssets = await assignedAssetsCollection
+            .find({ employeeEmail, hrEmail, status: "returned" })
+            .toArray();
+
+          for (const asset of returnedAssets) {
+            await assetCollection.updateOne(
+              { _id: new ObjectId(asset.assetId) },
+              { $inc: { availableQuantity: 1 } }
+            );
+          }
+
+          await userCollection.updateOne(
+            { email: hrEmail },
+            { $inc: { currentEmployees: -1 } }
+          );
+
+          res.send({ message: "Employee removed from team" });
+        } catch (err) {
+          res.status(500).send({ message: "Failed to remove employee" });
+        }
+      }
+    );
+
+    // =================== ASSET APIs (HR ONLY) ====================
     // GET → Paginated assets for HR + search
     app.get("/assets", verifyJWT, verifyHR, async (req, res) => {
       const hrEmail = req.user.email;
