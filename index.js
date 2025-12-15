@@ -463,6 +463,7 @@ async function run() {
                   product_data: {
                     name: `AssetVerse ${selectedPackage.name} Package`,
                     description: `Up to ${selectedPackage.employeeLimit} employees`,
+                    
                   },
                   unit_amount: selectedPackage.price * 100,
                 },
@@ -515,9 +516,16 @@ async function run() {
             },
           }
         );
+        const transactionId = session.payment_intent;
+        const query = { transactionId: transactionId };
+        const existingPayment = await paymentsCollection.findOne(query);
+
+        if (existingPayment) {
+          return res.send({ message: "Package already upgraded" });
+        }
 
         // Save payment record
-        await db.collection("payments").insertOne({
+        await paymentsCollection.insertOne({
           hrEmail,
           packageName: pkg.name,
           employeeLimit: pkg.employeeLimit,
