@@ -487,6 +487,53 @@ async function run() {
       }
     );
 
+    // POST → Confirm payment and upgrade package (called on return)
+    app.post("/confirm-payment", verifyJWT, verifyHR, async (req, res) => {
+      const { session_id } = req.body;
+
+      if (!session_id)
+        return res.status(400).send({ message: "No session ID" });
+
+      try {
+        const session = await stripe.checkout.sessions.retrieve(session_id);
+
+        if (session.payment_status !== "paid") {
+          return res.status(400).send({ message: "Payment not completed" });
+        }
+
+        const { hrEmail, packageName, employeeLimit } = session.metadata;
+
+        const pkg = await packagesCollection.findOne({ name: packageName });
+
+        // Upgrade user
+        await userCollection.updateOne(
+          { email: hrEmail },
+          {
+            $set: {
+              subscription: pkg.name,
+              packageLimit: pkg.employeeLimit,
+            },
+          }
+        );
+
+        // Save payment record
+        await db.collection("payments").insertOne({
+          hrEmail,
+          packageName: pkg.name,
+          employeeLimit: pkg.employeeLimit,
+          amount: pkg.price,
+          transactionId: session.payment_intent,
+          paymentDate: new Date(),
+          status: "completed",
+        });
+
+        res.send({ success: true, message: "Package upgraded!" });
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ message: "Verification failed" });
+      }
+    });
+
     // ------
   } catch (error) {
     console.error("MongoDB connection failed:", error);
