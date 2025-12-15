@@ -326,7 +326,7 @@ async function run() {
         ...asset,
         hrEmail: req.user.email,
         companyName: req.hrUser.companyName,
-        availableQuantity: asset.productQuantity,
+        availableQuantity: parseInt(asset.productQuantity),
         createdAt: new Date(),
       };
 
@@ -346,8 +346,8 @@ async function run() {
             productName: updateData.productName,
             productImage: updateData.productImage,
             productType: updateData.productType,
-            productQuantity: updateData.productQuantity,
-            availableQuantity: updateData.productQuantity,
+            productQuantity: parseInt(updateData.productQuantity),
+            availableQuantity: parseInt(updateData.productQuantity),
           },
         }
       );
@@ -370,6 +370,69 @@ async function run() {
         return res.status(404).send({ message: "Asset not found" });
       }
       res.send({ message: "Asset deleted" });
+    });
+
+    // POST → Direct Assign Asset to Employee (HR Only)
+    app.post("/assets/direct-assign", verifyJWT, verifyHR, async (req, res) => {
+      const { assetId, employeeEmail, employeeName } = req.body;
+      const hrEmail = req.user.email;
+
+      console.log("Direct assign attempt:", { assetId, employeeEmail, hrEmail });
+
+      try {
+        if (!assetId) {
+          return res.status(400).send({ message: "Asset ID is required" });
+        }
+
+        if (!ObjectId.isValid(assetId)) {
+          return res.status(400).send({ message: "Invalid Asset ID format" });
+        }
+
+        if (!employeeEmail) {
+          return res.status(400).send({ message: "Employee email is required" });
+        }
+
+        const asset = await assetCollection.findOne({
+          _id: new ObjectId(assetId),
+          hrEmail,
+        });
+
+        if (!asset) {
+          return res.status(404).send({ message: "Asset not found" });
+        }
+
+        // Parse quantity to ensure it is treated as a number (fixes "non-numeric type" error)
+        const currentQuantity = parseInt(asset.availableQuantity);
+
+        if (isNaN(currentQuantity) || currentQuantity <= 0) {
+          return res.status(400).send({ message: "Asset is out of stock" });
+        }
+
+        // Decrement quantity using $set to fix potential type issues in DB
+        await assetCollection.updateOne(
+          { _id: new ObjectId(assetId) },
+          { $set: { availableQuantity: currentQuantity - 1 } }
+        );
+
+        // Add to assigned assets
+        await assignedAssetsCollection.insertOne({
+          assetId,
+          assetName: asset.productName,
+          assetImage: asset.productImage,
+          assetType: asset.productType,
+          employeeEmail,
+          employeeName: employeeName || "Unknown Employee", // Fallback if name missing
+          hrEmail,
+          companyName: asset.companyName,
+          assignmentDate: new Date(),
+          status: "assigned",
+        });
+
+        res.send({ message: "Asset assigned successfully" });
+      } catch (err) {
+        console.error("Direct assignment error:", err);
+        res.status(500).send({ message: "Failed to assign asset: " + err.message });
+      }
     });
 
     // GET → All available assets across all companies (quantity > 0)
