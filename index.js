@@ -4,6 +4,7 @@ const cors = require("cors");
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb"); // ← ObjectId added
 const admin = require("firebase-admin");
 const port = process.env.PORT || 5000;
+const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 
 // Firebase Admin Init
 const decoded = Buffer.from(process.env.FB_SERVICE_KEY, "base64").toString(
@@ -20,7 +21,7 @@ const app = express();
 app.use(express.json());
 app.use(
   cors({
-    origin: ["http://localhost:5173", "https://your-live-site.vercel.app"], // add live URL later
+    origin: ["http://localhost:5173", "https://your-live-site.vercel.app"],
     credentials: true,
   })
 );
@@ -46,7 +47,7 @@ const verifyJWT = async (req, res, next) => {
   }
 };
 
-// HR-only middleware (now works because db is available)
+// HR-only middleware 
 const verifyHR = async (req, res, next) => {
   try {
     const user = await db
@@ -85,6 +86,7 @@ async function run() {
       "employeeAffiliations"
     );
     const packagesCollection = db.collection("packages");
+    const paymentsCollection = db.collection("payments");
 
     // ==================== USER APIs ====================
 
@@ -407,6 +409,83 @@ async function run() {
 
       res.send(packages);
     });
+
+    // ======================= PAYMENT / STRIPE APIs ====================
+
+    // POST → Create Stripe Checkout Session
+    app.post(
+      "/create-checkout-session",
+      verifyJWT,
+      verifyHR,
+      async (req, res) => {
+        const { packageName } = req.body;
+
+        try {
+          const selectedPackage = await packagesCollection.findOne({
+            name: packageName,
+          });
+          if (!selectedPackage)
+            return res.status(400).send({ message: "Package not found" });
+
+          // Free package → direct upgrade
+          if (selectedPackage.price === 0) {
+            await userCollection.updateOne(
+              { email: req.user.email },
+              {
+                $set: {
+                  subscription: selectedPackage.name,
+                  packageLimit: selectedPackage.employeeLimit,
+                },
+              }
+            );
+
+            await paymentsCollection.insertOne({
+              hrEmail: req.user.email,
+              packageName: selectedPackage.name,
+              employeeLimit: selectedPackage.employeeLimit,
+              amount: 0,
+              transactionId: "free-" + Date.now(),
+              paymentDate: new Date(),
+              status: "completed",
+            });
+
+            return res.send({
+              url: `${process.env.CLIENT_URL}/hr/upgrade-package?success=free`,
+            });
+          }
+
+          const session = await stripe.checkout.sessions.create({
+            payment_method_types: ["card"],
+            line_items: [
+              {
+                price_data: {
+                  currency: "usd",
+                  product_data: {
+                    name: `AssetVerse ${selectedPackage.name} Package`,
+                    description: `Up to ${selectedPackage.employeeLimit} employees`,
+                  },
+                  unit_amount: selectedPackage.price * 100,
+                },
+                quantity: 1,
+              },
+            ],
+            mode: "payment",
+            success_url: `${process.env.CLIENT_URL}/hr/upgrade-package?session_id={CHECKOUT_SESSION_ID}&success=true`,
+            cancel_url: `${process.env.CLIENT_URL}/hr/upgrade-package?canceled=true`,
+            metadata: {
+              hrEmail: req.user.email,
+              packageName: selectedPackage.name,
+              employeeLimit: selectedPackage.employeeLimit.toString(),
+            },
+          });
+
+          res.send({ url: session.url });
+        } catch (err) {
+          console.error(err);
+          res.status(500).send({ message: "Checkout failed" });
+        }
+      }
+    );
 
     // ------
   } catch (error) {
