@@ -105,24 +105,6 @@ async function run() {
       res.send(user || {});
     });
 
-    // ==================== ASSET APIs (HR ONLY) ====================
-
-    // POST → Add Asset
-    app.post("/assets", verifyJWT, verifyHR, async (req, res) => {
-      const asset = req.body;
-
-      const newAsset = {
-        ...asset,
-        hrEmail: req.user.email,
-        companyName: req.hrUser.companyName,
-        availableQuantity: asset.productQuantity,
-        createdAt: new Date(),
-      };
-
-      const result = await assetCollection.insertOne(newAsset);
-      res.send(result);
-    });
-
     // GET → All affiliated employees for logged-in HR
     app.get("/my-employees", verifyJWT, verifyHR, async (req, res) => {
       const hrEmail = req.user.email;
@@ -210,6 +192,38 @@ async function run() {
       }
     );
 
+    // PATCH → Update user profile (name, dateOfBirth, companyLogo)
+    app.patch("/user/profile", verifyJWT, async (req, res) => {
+      const { name, dateOfBirth, companyLogo } = req.body;
+      const email = req.user.email;
+
+      // At least one field must be provided
+      if (!name && !dateOfBirth && !companyLogo) {
+        return res.status(400).send({ message: "No data to update" });
+      }
+
+      try {
+        const updateFields = {};
+        if (name) updateFields.name = name.trim();
+        if (dateOfBirth) updateFields.dateOfBirth = dateOfBirth;
+        if (companyLogo) updateFields.companyLogo = companyLogo;
+
+        const result = await userCollection.updateOne(
+          { email },
+          { $set: updateFields }
+        );
+
+        if (result.matchedCount === 0) {
+          return res.status(404).send({ message: "User not found" });
+        }
+
+        res.send({ message: "Profile updated successfully" });
+      } catch (err) {
+        console.error("Profile update error:", err);
+        res.status(500).send({ message: "Failed to update profile" });
+      }
+    });
+
     // =================== ASSET APIs (HR ONLY) ====================
     // GET → Paginated assets for HR + search
     app.get("/assets", verifyJWT, verifyHR, async (req, res) => {
@@ -247,6 +261,21 @@ async function run() {
       } catch (err) {
         res.status(500).send({ message: "Failed to load assets" });
       }
+    });
+    // POST → Add Asset
+    app.post("/assets", verifyJWT, verifyHR, async (req, res) => {
+      const asset = req.body;
+
+      const newAsset = {
+        ...asset,
+        hrEmail: req.user.email,
+        companyName: req.hrUser.companyName,
+        availableQuantity: asset.productQuantity,
+        createdAt: new Date(),
+      };
+
+      const result = await assetCollection.insertOne(newAsset);
+      res.send(result);
     });
 
     // PUT → Edit Asset
