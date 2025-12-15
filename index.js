@@ -112,8 +112,7 @@ async function run() {
       const limit = parseInt(req.query.limit) || 10;
       const skip = (page - 1) * limit;
 
-      const employees = await db
-        .collection("employeeAffiliations")
+      const employees = await employeeAffiliationsCollection
         .find({ hrEmail, status: "active" })
         .sort({ affiliationDate: -1 })
         .skip(skip)
@@ -144,6 +143,50 @@ async function run() {
           hasPrev: page > 1,
         },
       });
+    });
+
+    // GET → Colleagues in employee's affiliated companies
+    app.get("/my-team", verifyJWT, async (req, res) => {
+      const employeeEmail = req.user.email;
+
+      try {
+        // Get employee's active affiliations
+        const affiliations = await employeeAffiliationsCollection
+          .find({ employeeEmail, status: "active" })
+          .toArray();
+
+        if (affiliations.length === 0) {
+          return res.send({ companies: [], colleagues: [] });
+        }
+
+        // Get all employees from same companies
+        const companyHrEmails = affiliations.map((a) => a.hrEmail);
+        const allAffiliated = await employeeAffiliationsCollection
+          .find({ hrEmail: { $in: companyHrEmails }, status: "active" })
+          .toArray();
+
+        // Group by company
+        const companies = affiliations.map((aff) => ({
+          companyName: aff.companyName,
+          companyLogo: aff.companyLogo,
+          hrEmail: aff.hrEmail,
+        }));
+
+        // Colleagues (exclude self)
+        const colleagues = allAffiliated
+          .filter((emp) => emp.employeeEmail !== employeeEmail)
+          .map((emp) => ({
+            employeeName: emp.employeeName,
+            employeeEmail: emp.employeeEmail,
+            companyName: emp.companyName,
+            companyLogo: emp.companyLogo,
+          }));
+
+        res.send({ companies, colleagues });
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ message: "Failed to load team" });
+      }
     });
 
     // DELETE → Remove employee from team (HR only)
@@ -227,7 +270,7 @@ async function run() {
     // GET → Employee's company affiliations
     app.get("/my-affiliations", verifyJWT, async (req, res) => {
       const employeeEmail = req.user.email;
-      
+
       const affiliations = await db
         .collection("employeeAffiliations")
         .find({ employeeEmail, status: "active" })
@@ -477,6 +520,23 @@ async function run() {
       }
     );
 
+    // GET → All asset requests made by logged-in employee
+    app.get("/my-requests", verifyJWT, async (req, res) => {
+      const requesterEmail = req.user.email;
+
+      try {
+        const requests = await requestCollection
+          .find({ requesterEmail })
+          .sort({ requestDate: -1 })
+          .toArray();
+
+        res.send(requests);
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ message: "Failed to load request history" });
+      }
+    });
+
     // PATCH → Reject request
     app.patch("/requests/:id/reject", verifyJWT, verifyHR, async (req, res) => {
       const requestId = req.params.id;
@@ -692,6 +752,24 @@ async function run() {
       } catch (err) {
         console.error(err);
         res.status(500).send({ message: "Verification failed" });
+      }
+    });
+
+    // GET → Payment history for logged-in HR
+    app.get("/payments", verifyJWT, verifyHR, async (req, res) => {
+      const hrEmail = req.user.email;
+
+      try {
+        const payments = await db
+          .collection("payments")
+          .find({ hrEmail })
+          .sort({ paymentDate: -1 })
+          .toArray();
+
+        res.send(payments);
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ message: "Failed to load payment history" });
       }
     });
 
