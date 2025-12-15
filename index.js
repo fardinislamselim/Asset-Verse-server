@@ -463,7 +463,6 @@ async function run() {
                   product_data: {
                     name: `AssetVerse ${selectedPackage.name} Package`,
                     description: `Up to ${selectedPackage.employeeLimit} employees`,
-                    
                   },
                   unit_amount: selectedPackage.price * 100,
                 },
@@ -539,6 +538,47 @@ async function run() {
       } catch (err) {
         console.error(err);
         res.status(500).send({ message: "Verification failed" });
+      }
+    });
+
+
+    // ======================= ANALYTICS APIs ====================
+    // GET → Analytics for HR dashboard
+    app.get("/analytics", verifyJWT, verifyHR, async (req, res) => {
+      const hrEmail = req.user.email;
+
+      try {
+        // Pie: Returnable vs Non-returnable count
+        const typeAggregation = await assetCollection
+          .aggregate([
+            { $match: { hrEmail } },
+            { $group: { _id: "$productType", count: { $sum: 1 } } },
+          ])
+          .toArray();
+
+        const pieData = typeAggregation.map((item) => ({
+          name: item._id,
+          value: item.count,
+        }));
+
+        // Bar: Top 5 most requested assets (approved requests)
+        const topRequested = await requestCollection
+          .aggregate([
+            { $match: { hrEmail, requestStatus: "approved" } },
+            { $group: { _id: "$assetName", count: { $sum: 1 } } },
+            { $sort: { count: -1 } },
+            { $limit: 5 },
+          ])
+          .toArray();
+
+        const barData = topRequested.map((item) => ({
+          name: item._id || "Unknown",
+          requests: item.count,
+        }));
+
+        res.send({ pieData, barData });
+      } catch (err) {
+        res.status(500).send({ message: "Analytics failed" });
       }
     });
 
