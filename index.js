@@ -885,6 +885,13 @@ async function run() {
           status: "active",
         });
 
+        // Recent Requests (Limit 5)
+        const recentRequests = await requestCollection
+          .find({ hrEmail })
+          .sort({ requestDate: -1 })
+          .limit(5)
+          .toArray();
+
         res.send({
           pieData,
           barData,
@@ -894,9 +901,75 @@ async function run() {
             pendingRequests,
             totalEmployees,
           },
+          recentRequests,
         });
       } catch (err) {
         res.status(500).send({ message: "Analytics failed" });
+      }
+    });
+
+    // GET → Analytics for Employee dashboard
+    app.get("/employee/analytics", verifyJWT, async (req, res) => {
+      const email = req.user.email;
+
+      try {
+        // 1. Overview Stats
+        const assignedAssets = await assignedAssetsCollection
+          .find({ employeeEmail: email, status: "assigned" })
+          .toArray();
+
+        const pendingRequests = await requestCollection.countDocuments({
+          requesterEmail: email,
+          requestStatus: "pending",
+        });
+
+        const returnableCount = assignedAssets.filter(
+          (a) => a.assetType === "Returnable"
+        ).length;
+        const nonReturnableCount = assignedAssets.filter(
+          (a) => a.assetType === "Non-returnable"
+        ).length;
+
+        // 2. Pie Chart Data (Asset Type Distribution)
+        const pieData = [
+          { name: "Returnable", value: returnableCount },
+          { name: "Non-returnable", value: nonReturnableCount },
+        ].filter((d) => d.value > 0);
+
+        // 3. Request Status Distribution (for Bar/Timeline)
+        const requestStats = await requestCollection
+          .aggregate([
+            { $match: { requesterEmail: email } },
+            { $group: { _id: "$requestStatus", count: { $sum: 1 } } },
+          ])
+          .toArray();
+
+        const requestStatusData = requestStats.map((item) => ({
+          name: item._id.charAt(0).toUpperCase() + item._id.slice(1),
+          value: item.count,
+        }));
+
+        // 4. Recent Assets (Limit 5)
+        const recentAssets = await assignedAssetsCollection
+          .find({ employeeEmail: email, status: "assigned" })
+          .sort({ assignmentDate: -1 })
+          .limit(5)
+          .toArray();
+
+        res.send({
+          summary: {
+            totalAssigned: assignedAssets.length,
+            returnable: returnableCount,
+            nonReturnable: nonReturnableCount,
+            pending: pendingRequests,
+          },
+          pieData,
+          requestStatusData,
+          recentAssets,
+        });
+      } catch (err) {
+        console.error("Employee analytics error:", err);
+        res.status(500).send({ message: "Failed to load analytics" });
       }
     });
 
