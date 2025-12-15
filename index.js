@@ -224,6 +224,19 @@ async function run() {
       }
     });
 
+    // GET → Employee's company affiliations
+    app.get("/my-affiliations", verifyJWT, async (req, res) => {
+      const employeeEmail = req.user.email;
+      
+      const affiliations = await db
+        .collection("employeeAffiliations")
+        .find({ employeeEmail, status: "active" })
+        .sort({ affiliationDate: -1 })
+        .toArray();
+
+      res.send(affiliations);
+    });
+
     // =================== ASSET APIs (HR ONLY) ====================
     // GET → Paginated assets for HR + search
     app.get("/assets", verifyJWT, verifyHR, async (req, res) => {
