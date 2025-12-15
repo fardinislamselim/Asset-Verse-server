@@ -123,18 +123,42 @@ async function run() {
       res.send(result);
     });
 
-    // GET → All assets for HR + search
+    // GET → Paginated assets for HR + search
     app.get("/assets", verifyJWT, verifyHR, async (req, res) => {
+      const hrEmail = req.user.email;
       const search = req.query.search || "";
-      const assets = await assetCollection
-        .find({
-          hrEmail: req.user.email,
-          productName: { $regex: search, $options: "i" },
-        })
-        .sort({ createdAt: -1 })
-        .toArray();
+      const page = parseInt(req.query.page) || 1;
+      const limit = parseInt(req.query.limit) || 10;
+      const skip = (page - 1) * limit;
 
-      res.send(assets);
+      try {
+        const query = {
+          hrEmail,
+          productName: { $regex: search, $options: "i" },
+        };
+
+        const assets = await assetCollection
+          .find(query)
+          .sort({ createdAt: -1 })
+          .skip(skip)
+          .limit(limit)
+          .toArray();
+
+        const total = await assetCollection.countDocuments(query);
+
+        res.send({
+          assets,
+          pagination: {
+            currentPage: page,
+            totalPages: Math.ceil(total / limit),
+            totalItems: total,
+            hasNext: page < Math.ceil(total / limit),
+            hasPrev: page > 1,
+          },
+        });
+      } catch (err) {
+        res.status(500).send({ message: "Failed to load assets" });
+      }
     });
 
     // PUT → Edit Asset
@@ -540,7 +564,6 @@ async function run() {
         res.status(500).send({ message: "Verification failed" });
       }
     });
-
 
     // ======================= ANALYTICS APIs ====================
     // GET → Analytics for HR dashboard
