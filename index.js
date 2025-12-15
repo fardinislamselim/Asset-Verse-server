@@ -126,27 +126,42 @@ async function run() {
     // GET → All affiliated employees for logged-in HR
     app.get("/my-employees", verifyJWT, verifyHR, async (req, res) => {
       const hrEmail = req.user.email;
+      const page = parseInt(req.query.page) || 1;
+      const limit = parseInt(req.query.limit) || 10;
+      const skip = (page - 1) * limit;
 
-      const employees = await employeeAffiliationsCollection
+      const employees = await db
+        .collection("employeeAffiliations")
         .find({ hrEmail, status: "active" })
         .sort({ affiliationDate: -1 })
+        .skip(skip)
+        .limit(limit)
         .toArray();
+
+      const total = await db
+        .collection("employeeAffiliations")
+        .countDocuments({ hrEmail, status: "active" });
 
       const employeesWithCount = await Promise.all(
         employees.map(async (emp) => {
-          const count = await assignedAssetsCollection.countDocuments({
+          const count = await db.collection("assignedAssets").countDocuments({
             employeeEmail: emp.employeeEmail,
             status: "assigned",
           });
-
-          return {
-            ...emp,
-            assignedAssetsCount: count,
-          };
+          return { ...emp, assignedAssetsCount: count };
         })
       );
 
-      res.send(employeesWithCount);
+      res.send({
+        employees: employeesWithCount,
+        pagination: {
+          currentPage: page,
+          totalPages: Math.ceil(total / limit),
+          totalItems: total,
+          hasNext: page < Math.ceil(total / limit),
+          hasPrev: page > 1,
+        },
+      });
     });
 
     // DELETE → Remove employee from team (HR only)
@@ -159,11 +174,10 @@ async function run() {
         const hrEmail = req.user.email;
 
         try {
-          await employeeAffiliationsCollection
-            .updateOne(
-              { employeeEmail, hrEmail },
-              { $set: { status: "inactive" } }
-            );
+          await employeeAffiliationsCollection.updateOne(
+            { employeeEmail, hrEmail },
+            { $set: { status: "inactive" } }
+          );
 
           await assignedAssetsCollection.updateMany(
             { employeeEmail, hrEmail, status: "assigned" },
