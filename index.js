@@ -870,7 +870,31 @@ async function run() {
           requests: item.count,
         }));
 
-        res.send({ pieData, barData });
+        // Summary Counts
+        const totalAssets = await assetCollection.countDocuments({ hrEmail });
+        const assignedAssets = await assignedAssetsCollection.countDocuments({
+          hrEmail,
+          status: "assigned",
+        });
+        const pendingRequests = await requestCollection.countDocuments({
+          hrEmail,
+          requestStatus: "pending",
+        });
+        const totalEmployees = await employeeAffiliationsCollection.countDocuments({
+          hrEmail,
+          status: "active",
+        });
+
+        res.send({
+          pieData,
+          barData,
+          summary: {
+            totalAssets,
+            assignedAssets,
+            pendingRequests,
+            totalEmployees,
+          },
+        });
       } catch (err) {
         res.status(500).send({ message: "Analytics failed" });
       }
