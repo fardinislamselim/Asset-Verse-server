@@ -454,8 +454,29 @@ async function run() {
     // GET → All available assets across all companies (quantity > 0)
     app.get("/available-assets", async (req, res) => {
       try {
+        const search = req.query.search || "";
+        const sort = req.query.sort || "";
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 9;
+        const skip = (page - 1) * limit;
+
+        const query = {
+          availableQuantity: { $gt: 0 },
+          productName: { $regex: search, $options: "i" },
+        };
+
+        let sortOptions = { createdAt: -1 };
+        if (sort === "asc") {
+          sortOptions = { availableQuantity: 1 };
+        } else if (sort === "desc") {
+          sortOptions = { availableQuantity: -1 };
+        }
+
         const assets = await assetCollection
-          .find({ availableQuantity: { $gt: 0 } })
+          .find(query)
+          .sort(sortOptions)
+          .skip(skip)
+          .limit(limit)
           .project({
             productName: 1,
             productImage: 1,
@@ -466,7 +487,18 @@ async function run() {
           })
           .toArray();
 
-        res.send(assets);
+        const total = await assetCollection.countDocuments(query);
+
+        res.send({
+          assets,
+          pagination: {
+            currentPage: page,
+            totalPages: Math.ceil(total / limit),
+            totalItems: total,
+            hasNext: page < Math.ceil(total / limit),
+            hasPrev: page > 1,
+          },
+        });
       } catch (err) {
         res.status(500).send({ message: "Failed to load assets" });
       }
