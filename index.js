@@ -181,6 +181,26 @@ async function run() {
           .find({ hrEmail: { $in: companyHrEmails }, status: "active" })
           .toArray();
 
+        // Get unique emails of colleagues to fetch their user profile data
+        const colleagueEmails = [
+          ...new Set(
+            allAffiliated
+              .map((c) => c.employeeEmail)
+              .filter((email) => email !== employeeEmail)
+          ),
+        ];
+
+        const usersData = await userCollection
+          .find({ email: { $in: colleagueEmails } })
+          .project({ email: 1, dateOfBirth: 1, photoURL: 1 })
+          .toArray();
+
+        // Create a map for quick lookup
+        const userMap = {};
+        usersData.forEach((u) => {
+          userMap[u.email] = u;
+        });
+
         // Group by company
         const companies = affiliations.map((aff) => ({
           companyName: aff.companyName,
@@ -191,12 +211,17 @@ async function run() {
         // Colleagues (exclude self)
         const colleagues = allAffiliated
           .filter((emp) => emp.employeeEmail !== employeeEmail)
-          .map((emp) => ({
-            employeeName: emp.employeeName,
-            employeeEmail: emp.employeeEmail,
-            companyName: emp.companyName,
-            companyLogo: emp.companyLogo,
-          }));
+          .map((emp) => {
+            const userData = userMap[emp.employeeEmail] || {};
+            return {
+              employeeName: emp.employeeName,
+              employeeEmail: emp.employeeEmail,
+              companyName: emp.companyName,
+              companyLogo: emp.companyLogo,
+              dateOfBirth: userData.dateOfBirth,
+              photoURL: userData.photoURL, // Prefer user's actual profile photo
+            };
+          });
 
         res.send({ companies, colleagues });
       } catch (err) {
