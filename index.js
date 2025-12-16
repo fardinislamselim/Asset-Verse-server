@@ -63,6 +63,22 @@ const verifyHR = async (req, res, next) => {
   }
 };
 
+// Employee-only middleware
+const verifyEmployee = async (req, res, next) => {
+  try {
+    const user = await db
+      .collection("users")
+      .findOne({ email: req.user.email });
+    if (!user || user.role !== "employee") {
+      return res.status(403).json({ message: "Employee access only" });
+    }
+    req.employeeUser = user;
+    next();
+  } catch (err) {
+    return res.status(403).json({ message: "Forbidden" });
+  }
+};
+
 // MongoDB Connection
 const client = new MongoClient(process.env.MONGODB_URI, {
   serverApi: {
@@ -146,7 +162,7 @@ async function run() {
     });
 
     // GET → Colleagues in employee's affiliated companies
-    app.get("/my-team", verifyJWT, async (req, res) => {
+    app.get("/my-team", verifyJWT, verifyEmployee, async (req, res) => {
       const employeeEmail = req.user.email;
 
       try {
@@ -268,7 +284,7 @@ async function run() {
     });
 
     // GET → Employee's company affiliations
-    app.get("/my-affiliations", verifyJWT, async (req, res) => {
+    app.get("/my-affiliations", verifyJWT, verifyEmployee, async (req, res) => {
       const employeeEmail = req.user.email;
 
       const affiliations = await db
@@ -436,7 +452,7 @@ async function run() {
     });
 
     // GET → All available assets across all companies (quantity > 0)
-    app.get("/available-assets", verifyJWT, async (req, res) => {
+    app.get("/available-assets", async (req, res) => {
       try {
         const assets = await assetCollection
           .find({ availableQuantity: { $gt: 0 } })
@@ -456,8 +472,8 @@ async function run() {
       }
     });
 
-    // GET → Single Asset Details (Authenticated)
-    app.get("/assets/:id", verifyJWT, async (req, res) => {
+    // GET → Single Asset Details (Public)
+    app.get("/assets/:id", async (req, res) => {
       const { id } = req.params;
       if (!ObjectId.isValid(id)) {
         return res.status(400).send({ message: "Invalid Asset ID" });
@@ -476,7 +492,7 @@ async function run() {
 
     // ==================== REQUEST APIs ====================
     // POST → Employee creates asset request
-    app.post("/requests", verifyJWT, async (req, res) => {
+    app.post("/requests", verifyJWT, verifyEmployee, async (req, res) => {
       const {
         assetId,
         assetName,
@@ -602,7 +618,7 @@ async function run() {
     );
 
     // GET → All asset requests made by logged-in employee
-    app.get("/my-requests", verifyJWT, async (req, res) => {
+    app.get("/my-requests", verifyJWT, verifyEmployee, async (req, res) => {
       const requesterEmail = req.user.email;
 
       try {
@@ -643,7 +659,7 @@ async function run() {
 
     // ==================assigned assets related APIs ==================
     // GET → All assigned assets for logged-in employee (from all companies)
-    app.get("/my-assets", verifyJWT, async (req, res) => {
+    app.get("/my-assets", verifyJWT, verifyEmployee, async (req, res) => {
       const employeeEmail = req.user.email;
 
       const assets = await assignedAssetsCollection
@@ -658,7 +674,7 @@ async function run() {
     });
 
     // PATCH → Employee returns a returnable asset
-    app.patch("/assigned-assets/:id/return", verifyJWT, async (req, res) => {
+    app.patch("/assigned-assets/:id/return", verifyJWT, verifyEmployee, async (req, res) => {
       const assignedId = req.params.id;
       const employeeEmail = req.user.email;
 
@@ -927,7 +943,7 @@ async function run() {
     });
 
     // GET → Analytics for Employee dashboard
-    app.get("/employee/analytics", verifyJWT, async (req, res) => {
+    app.get("/employee/analytics", verifyJWT, verifyEmployee, async (req, res) => {
       const email = req.user.email;
 
       try {
