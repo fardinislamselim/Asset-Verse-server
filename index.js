@@ -456,6 +456,24 @@ async function run() {
       }
     });
 
+    // GET → Single Asset Details (Authenticated)
+    app.get("/assets/:id", verifyJWT, async (req, res) => {
+      const { id } = req.params;
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).send({ message: "Invalid Asset ID" });
+      }
+
+      try {
+        const asset = await assetCollection.findOne({ _id: new ObjectId(id) });
+        if (!asset) {
+          return res.status(404).send({ message: "Asset not found" });
+        }
+        res.send(asset);
+      } catch (err) {
+        res.status(500).send({ message: "Failed to load asset details" });
+      }
+    });
+
     // ==================== REQUEST APIs ====================
     // POST → Employee creates asset request
     app.post("/requests", verifyJWT, async (req, res) => {
