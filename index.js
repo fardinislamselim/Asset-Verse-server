@@ -21,7 +21,7 @@ const app = express();
 app.use(express.json());
 app.use(
   cors({
-    origin: ["http://localhost:5173", "https://your-live-site.vercel.app"],
+    origin: ["http://localhost:5173/", "https://assets-verse.web.app/"],
     credentials: true,
   })
 );
@@ -90,7 +90,7 @@ const client = new MongoClient(process.env.MONGODB_URI, {
 
 async function run() {
   try {
-    await client.connect();
+    // await client.connect();
     db = client.db("AssetsVerse");
     console.log("Connected to MongoDB!");
 
