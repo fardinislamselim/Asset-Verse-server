@@ -321,6 +321,83 @@ async function run() {
       res.send(affiliations);
     });
 
+    // GET → All employees not yet affiliated with this HR
+    app.get("/employees-to-add", verifyJWT, verifyHR, async (req, res) => {
+      const hrEmail = req.user.email;
+      
+      try {
+        // Get all employees
+        const allEmployees = await userCollection.find({ role: "employee" }).toArray();
+        
+        // Get this HR's current affiliations
+        const currentAffiliations = await employeeAffiliationsCollection
+          .find({ hrEmail, status: "active" })
+          .toArray();
+        
+        const affiliatedEmails = currentAffiliations.map(a => a.employeeEmail);
+        
+        // Filter out those already in team
+        const availableEmployees = allEmployees.filter(emp => !affiliatedEmails.includes(emp.email));
+        
+        res.send(availableEmployees);
+      } catch (err) {
+        res.status(500).send({ message: "Failed to fetch employees" });
+      }
+    });
+
+    // POST → Add employee to team directly (no asset)
+    app.post("/add-to-team", verifyJWT, verifyHR, async (req, res) => {
+      const { employeeEmail, employeeName } = req.body;
+      const hrEmail = req.user.email;
+      const hrUser = req.hrUser;
+
+      try {
+        const existingAff = await employeeAffiliationsCollection.findOne({
+          employeeEmail,
+          hrEmail,
+          status: "active",
+        });
+
+        if (existingAff) {
+          return res.status(400).send({ message: "Employee already in your team" });
+        }
+
+        const employeeCount = await employeeAffiliationsCollection.countDocuments({
+          hrEmail,
+          status: "active",
+        });
+
+        if (employeeCount >= hrUser.packageLimit) {
+          return res.status(400).send({
+            message: "Employee limit reached. Upgrade your package to add more employees.",
+            action: "upgrade_required",
+          });
+        }
+
+        // Add affiliation
+        await employeeAffiliationsCollection.insertOne({
+          employeeEmail,
+          employeeName,
+          hrEmail,
+          hrName: hrUser.name,
+          companyName: hrUser.companyName,
+          companyLogo: hrUser.companyLogo,
+          affiliationDate: new Date(),
+          status: "active",
+        });
+
+        // Increment employee count
+        await userCollection.updateOne(
+          { email: hrEmail },
+          { $inc: { currentEmployees: 1 } }
+        );
+
+        res.send({ success: true, message: "Employee added to team" });
+      } catch (err) {
+        res.status(500).send({ message: "Failed to add employee" });
+      }
+    });
+
     // =================== ASSET APIs (HR ONLY) ====================
     // GET → Paginated assets for HR + search
     app.get("/assets", verifyJWT, verifyHR, async (req, res) => {
@@ -413,26 +490,17 @@ async function run() {
       res.send({ message: "Asset deleted" });
     });
 
-    // POST → Direct Assign Asset to Employee (HR Only)
+    // POST → Direct Assign Asset to Employee
     app.post("/assets/direct-assign", verifyJWT, verifyHR, async (req, res) => {
       const { assetId, employeeEmail, employeeName } = req.body;
       const hrEmail = req.user.email;
+      const hrUser = req.hrUser;
 
-      console.log("Direct assign attempt:", { assetId, employeeEmail, hrEmail });
+      if (!assetId || !employeeEmail || !employeeName) {
+        return res.status(400).send({ message: "Missing required fields" });
+      }
 
       try {
-        if (!assetId) {
-          return res.status(400).send({ message: "Asset ID is required" });
-        }
-
-        if (!ObjectId.isValid(assetId)) {
-          return res.status(400).send({ message: "Invalid Asset ID format" });
-        }
-
-        if (!employeeEmail) {
-          return res.status(400).send({ message: "Employee email is required" });
-        }
-
         const asset = await assetCollection.findOne({
           _id: new ObjectId(assetId),
           hrEmail,
@@ -442,37 +510,78 @@ async function run() {
           return res.status(404).send({ message: "Asset not found" });
         }
 
-        // Parse quantity to ensure it is treated as a number (fixes "non-numeric type" error)
-        const currentQuantity = parseInt(asset.availableQuantity);
-
-        if (isNaN(currentQuantity) || currentQuantity <= 0) {
+        if (asset.availableQuantity <= 0) {
           return res.status(400).send({ message: "Asset is out of stock" });
         }
 
-        // Decrement quantity using $set to fix potential type issues in DB
-        await assetCollection.updateOne(
-          { _id: new ObjectId(assetId) },
-          { $set: { availableQuantity: currentQuantity - 1 } }
-        );
-
-        // Add to assigned assets
-        await assignedAssetsCollection.insertOne({
-          assetId,
-          assetName: asset.productName,
-          assetImage: asset.productImage,
-          assetType: asset.productType,
+        // Check if affiliation exists
+        const existingAff = await employeeAffiliationsCollection.findOne({
           employeeEmail,
-          employeeName: employeeName || "Unknown Employee", // Fallback if name missing
           hrEmail,
-          companyName: asset.companyName,
-          assignmentDate: new Date(),
-          status: "assigned",
+          status: "active",
         });
 
-        res.send({ message: "Asset assigned successfully" });
+        const employeeCount = await employeeAffiliationsCollection.countDocuments({
+          hrEmail,
+          status: "active",
+        });
+
+        // If new affiliation and limit reached, BLOCK
+        if (
+          !existingAff &&
+          employeeCount >= hrUser.packageLimit
+        ) {
+          return res.status(400).send({
+            message:
+              "Employee limit reached. Upgrade your package to add more employees.",
+            action: "upgrade_required",
+          });
+        }
+
+        // 1. Decrement available quantity
+        await assetCollection.updateOne(
+          { _id: new ObjectId(assetId) },
+          { $inc: { availableQuantity: -1 } }
+        );
+
+        // 2. Add affiliation if not exists
+        if (!existingAff) {
+          await employeeAffiliationsCollection.insertOne({
+            employeeEmail,
+            employeeName,
+            hrEmail,
+            hrName: hrUser.name,
+            companyName: hrUser.companyName,
+            companyLogo: hrUser.companyLogo,
+            affiliationDate: new Date(),
+            status: "active",
+          });
+
+          // Increment employee count
+          await userCollection.updateOne(
+            { email: hrEmail },
+            { $inc: { currentEmployees: 1 } }
+          );
+        }
+
+        // 3. Create assignment record
+        const newAssignment = {
+          assetId,
+          assetName: asset.productName,
+          assetType: asset.productType,
+          employeeEmail,
+          employeeName,
+          hrEmail,
+          companyName: hrUser.companyName,
+          assignmentDate: new Date(),
+          status: "assigned",
+        };
+
+        const result = await assignedAssetsCollection.insertOne(newAssignment);
+        res.send(result);
       } catch (err) {
-        console.error("Direct assignment error:", err);
-        res.status(500).send({ message: "Failed to assign asset: " + err.message });
+        console.error("Direct Assign Error:", err);
+        res.status(500).send({ message: "Assignment failed" });
       }
     });
 
@@ -561,33 +670,81 @@ async function run() {
         requesterEmail,
       } = req.body;
 
-      const newRequest = {
-        assetId,
-        assetName,
-        assetType,
-        companyName,
-        hrEmail,
-        requesterEmail,
-        requesterName,
-        note: note || "",
-        requestDate: new Date(),
-        requestStatus: "pending",
-      };
+      try {
+        // Fetch HR data to check limit
+        const hrUser = await userCollection.findOne({ email: hrEmail, role: "hr" });
+        if (!hrUser) {
+          return res.status(404).send({ message: "Company HR not found" });
+        }
 
-      const result = await requestCollection.insertOne(newRequest);
-      res.status(201).send(result);
+        // Check affiliation
+        const affiliation = await employeeAffiliationsCollection.findOne({
+          employeeEmail: requesterEmail,
+          hrEmail,
+          status: "active",
+        });
+
+        // Check current employee count directly from affiliations
+        const employeeCount = await employeeAffiliationsCollection.countDocuments({
+          hrEmail,
+          status: "active",
+        });
+
+        // If company is full AND requester is NEW, block the request
+        if (!affiliation && employeeCount >= hrUser.packageLimit) {
+          return res.status(400).send({
+            message: "This company has reached its employee limit and cannot accept new members at this time.",
+            action: "company_full",
+          });
+        }
+
+        const newRequest = {
+          assetId,
+          assetName,
+          assetType,
+          companyName,
+          hrEmail,
+          requesterEmail,
+          requesterName,
+          note: note || "",
+          requestDate: new Date(),
+          requestStatus: "pending",
+        };
+
+        const result = await requestCollection.insertOne(newRequest);
+        res.status(201).send(result);
+      } catch (err) {
+        console.error("Request Error:", err);
+        res.status(500).send({ message: "Failed to submit request" });
+      }
     });
 
     // GET → All pending requests for logged-in HR
     app.get("/requests", verifyJWT, verifyHR, async (req, res) => {
       const hrEmail = req.user.email;
 
-      const requests = await requestCollection
-        .find({ hrEmail: hrEmail, requestStatus: "pending" })
-        .sort({ requestDate: -1 })
-        .toArray();
+      try {
+        const requests = await requestCollection
+          .find({ hrEmail: hrEmail, requestStatus: "pending" })
+          .sort({ requestDate: -1 })
+          .toArray();
 
-      res.send(requests);
+        // Check affiliation for each requester
+        const enrichedRequests = await Promise.all(
+          requests.map(async (req) => {
+            const affiliation = await employeeAffiliationsCollection.findOne({
+              employeeEmail: req.requesterEmail,
+              hrEmail,
+              status: "active",
+            });
+            return { ...req, isAffiliated: !!affiliation };
+          })
+        );
+
+        res.send(enrichedRequests);
+      } catch (err) {
+        res.status(500).send({ message: "Failed to fetch requests" });
+      }
     });
 
     // PATCH → Approve request
@@ -598,6 +755,7 @@ async function run() {
       async (req, res) => {
         const requestId = req.params.id;
         const hrEmail = req.user.email;
+        const hrUser = req.hrUser;
 
         try {
           const request = await requestCollection.findOne({
@@ -605,75 +763,97 @@ async function run() {
             hrEmail,
             requestStatus: "pending",
           });
-          if (!request)
+
+          if (!request) {
             return res.status(404).send({ message: "Request not found" });
+          }
 
           const asset = await assetCollection.findOne({
             _id: new ObjectId(request.assetId),
+            hrEmail,
           });
-          if (asset.availableQuantity <= 0) {
-            return res
-              .status(400)
-              .send({ message: "Asset no longer available" });
+
+          if (!asset || asset.availableQuantity <= 0) {
+            return res.status(400).send({ message: "Asset not available" });
           }
 
-          await assetCollection.updateOne(
-            { _id: new ObjectId(request.assetId) },
-            { $inc: { availableQuantity: -1 } }
-          );
-
-          //  Create assigned Assets
-          await assignedAssetsCollection.insertOne({
-            assetId: request.assetId,
-            assetName: request.assetName,
-            assetImage: asset.productImage,
-            assetType: request.assetType,
-            employeeEmail: request.requesterEmail,
-            employeeName: request.requesterName,
-            hrEmail,
-            companyName: request.companyName,
-            assignmentDate: new Date(),
-            status: "assigned",
-          });
-
-          //Check if first affiliation → create employeeAffiliations
+          // Check if affiliation exists
           const existingAff = await employeeAffiliationsCollection.findOne({
             employeeEmail: request.requesterEmail,
             hrEmail,
+            status: "active",
           });
 
-          if (!existingAff) {
-            await employeeAffiliationsCollection.insertOne({
-              employeeEmail: request.requesterEmail,
-              employeeName: request.requesterName,
-              hrEmail,
-              companyName: request.companyName,
-              companyLogo: req.hrUser.companyLogo || "",
-              affiliationDate: new Date(),
-              status: "active",
-            });
+          // Check current employee count
+          const employeeCount = await employeeAffiliationsCollection.countDocuments({
+            hrEmail,
+            status: "active",
+          });
 
-            // Increase currentEmployees count in users collection
-            await userCollection.updateOne(
-              { email: hrEmail },
-              { $inc: { currentEmployees: 1 } }
-            );
+          // If new affiliation and limit reached, BLOCK the action
+          if (
+            !existingAff &&
+            employeeCount >= hrUser.packageLimit
+          ) {
+            return res.status(400).send({
+              message:
+                "Employee limit reached. Upgrade your package to add more employees.",
+              action: "upgrade_required", 
+            });
           }
 
-          // Update request status to approved
+          // 1. Mark request as approved
           await requestCollection.updateOne(
             { _id: new ObjectId(requestId) },
             { $set: { requestStatus: "approved", approvalDate: new Date() } }
           );
 
-          res.send({ message: "Request approved successfully" });
+          // 2. Decrement available quantity
+          await assetCollection.updateOne(
+            { _id: new ObjectId(request.assetId) },
+            { $inc: { availableQuantity: -1 } }
+          );
+
+          // 3. Add/Verify affiliation
+          if (!existingAff) {
+            await employeeAffiliationsCollection.insertOne({
+              employeeEmail: request.requesterEmail,
+              employeeName: request.requesterName,
+              hrEmail,
+              hrName: hrUser.name,
+              companyName: hrUser.companyName,
+              companyLogo: hrUser.companyLogo,
+              affiliationDate: new Date(),
+              status: "active",
+            });
+
+            await userCollection.updateOne(
+              { email: hrEmail },
+              { $set: { currentEmployees: employeeCount + 1 } }
+            );
+          }
+
+          // 4. Create assignment
+          const newAssignment = {
+            assetId: request.assetId,
+            assetName: request.assetName,
+            assetType: request.assetType,
+            employeeEmail: request.requesterEmail,
+            employeeName: request.requesterName,
+            hrEmail,
+            companyName: hrUser.companyName,
+            assignmentDate: new Date(),
+            status: "assigned",
+          };
+
+          const result = await assignedAssetsCollection.insertOne(newAssignment);
+          res.send({ message: "Request approved and asset assigned", result });
         } catch (err) {
-          console.error(err);
+          console.error("Approve Error:", err);
           res.status(500).send({ message: "Approval failed" });
         }
       }
     );
-
     // GET → All asset requests made by logged-in employee
     app.get("/my-requests", verifyJWT, verifyEmployee, async (req, res) => {
       const requesterEmail = req.user.email;
@@ -731,41 +911,46 @@ async function run() {
     });
 
     // PATCH → Employee returns a returnable asset
-    app.patch("/assigned-assets/:id/return", verifyJWT, verifyEmployee, async (req, res) => {
-      const assignedId = req.params.id;
-      const employeeEmail = req.user.email;
+    app.patch(
+      "/assigned-assets/:id/return",
+      verifyJWT,
+      verifyEmployee,
+      async (req, res) => {
+        const assignedId = req.params.id;
+        const employeeEmail = req.user.email;
 
-      try {
-        // Find the assigned asset
-        const assigned = await assignedAssetsCollection.findOne({
-          _id: new ObjectId(assignedId),
-          employeeEmail,
-          status: "assigned",
-          assetType: "Returnable",
-        });
+        try {
+          // Find the assigned asset
+          const assigned = await assignedAssetsCollection.findOne({
+            _id: new ObjectId(assignedId),
+            employeeEmail,
+            status: "assigned",
+            assetType: "Returnable",
+          });
 
-        // Update status to returned
-        await assignedAssetsCollection.updateOne(
-          { _id: new ObjectId(assignedId) },
-          {
-            $set: {
-              status: "returned",
-              returnDate: new Date(),
-            },
-          }
-        );
+          // Update status to returned
+          await assignedAssetsCollection.updateOne(
+            { _id: new ObjectId(assignedId) },
+            {
+              $set: {
+                status: "returned",
+                returnDate: new Date(),
+              },
+            }
+          );
 
-        // Increment availableQuantity back in assets collection
-        await assetCollection.updateOne(
-          { _id: new ObjectId(assigned.assetId) },
-          { $inc: { availableQuantity: 1 } }
-        );
+          // Increment availableQuantity back in assets collection
+          await assetCollection.updateOne(
+            { _id: new ObjectId(assigned.assetId) },
+            { $inc: { availableQuantity: 1 } }
+          );
 
-        res.send({ message: "Asset returned successfully" });
-      } catch (err) {
-        res.status(500).send({ message: "Return failed" });
+          res.send({ message: "Asset returned successfully" });
+        } catch (err) {
+          res.status(500).send({ message: "Return failed" });
+        }
       }
-    });
+    );
 
     //======================= PACKAGE APIs ====================
     // GET → All available packages
@@ -971,17 +1156,30 @@ async function run() {
           hrEmail,
           requestStatus: "pending",
         });
-        const totalEmployees = await employeeAffiliationsCollection.countDocuments({
-          hrEmail,
-          status: "active",
-        });
+        const totalEmployees =
+          await employeeAffiliationsCollection.countDocuments({
+            hrEmail,
+            status: "active",
+          });
 
         // Recent Requests (Limit 5)
-        const recentRequests = await requestCollection
+        const rawRecentRequests = await requestCollection
           .find({ hrEmail })
           .sort({ requestDate: -1 })
           .limit(5)
           .toArray();
+
+        // Check affiliation for each requester in recentRequests
+        const recentRequests = await Promise.all(
+          rawRecentRequests.map(async (req) => {
+            const affiliation = await employeeAffiliationsCollection.findOne({
+              employeeEmail: req.requesterEmail,
+              hrEmail,
+              status: "active",
+            });
+            return { ...req, isAffiliated: !!affiliation };
+          })
+        );
 
         res.send({
           pieData,
@@ -991,6 +1189,8 @@ async function run() {
             assignedAssets,
             pendingRequests,
             totalEmployees,
+            currentEmployees: req.hrUser.currentEmployees,
+            packageLimit: req.hrUser.packageLimit,
           },
           recentRequests,
         });
@@ -1000,69 +1200,74 @@ async function run() {
     });
 
     // GET → Analytics for Employee dashboard
-    app.get("/employee/analytics", verifyJWT, verifyEmployee, async (req, res) => {
-      const email = req.user.email;
+    app.get(
+      "/employee/analytics",
+      verifyJWT,
+      verifyEmployee,
+      async (req, res) => {
+        const email = req.user.email;
 
-      try {
-        // 1. Overview Stats
-        const assignedAssets = await assignedAssetsCollection
-          .find({ employeeEmail: email, status: "assigned" })
-          .toArray();
+        try {
+          // 1. Overview Stats
+          const assignedAssets = await assignedAssetsCollection
+            .find({ employeeEmail: email, status: "assigned" })
+            .toArray();
 
-        const pendingRequests = await requestCollection.countDocuments({
-          requesterEmail: email,
-          requestStatus: "pending",
-        });
+          const pendingRequests = await requestCollection.countDocuments({
+            requesterEmail: email,
+            requestStatus: "pending",
+          });
 
-        const returnableCount = assignedAssets.filter(
-          (a) => a.assetType === "Returnable"
-        ).length;
-        const nonReturnableCount = assignedAssets.filter(
-          (a) => a.assetType === "Non-returnable"
-        ).length;
+          const returnableCount = assignedAssets.filter(
+            (a) => a.assetType === "Returnable"
+          ).length;
+          const nonReturnableCount = assignedAssets.filter(
+            (a) => a.assetType === "Non-returnable"
+          ).length;
 
-        // 2. Pie Chart Data (Asset Type Distribution)
-        const pieData = [
-          { name: "Returnable", value: returnableCount },
-          { name: "Non-returnable", value: nonReturnableCount },
-        ].filter((d) => d.value > 0);
+          // 2. Pie Chart Data (Asset Type Distribution)
+          const pieData = [
+            { name: "Returnable", value: returnableCount },
+            { name: "Non-returnable", value: nonReturnableCount },
+          ].filter((d) => d.value > 0);
 
-        // 3. Request Status Distribution (for Bar/Timeline)
-        const requestStats = await requestCollection
-          .aggregate([
-            { $match: { requesterEmail: email } },
-            { $group: { _id: "$requestStatus", count: { $sum: 1 } } },
-          ])
-          .toArray();
+          // 3. Request Status Distribution (for Bar/Timeline)
+          const requestStats = await requestCollection
+            .aggregate([
+              { $match: { requesterEmail: email } },
+              { $group: { _id: "$requestStatus", count: { $sum: 1 } } },
+            ])
+            .toArray();
 
-        const requestStatusData = requestStats.map((item) => ({
-          name: item._id.charAt(0).toUpperCase() + item._id.slice(1),
-          value: item.count,
-        }));
+          const requestStatusData = requestStats.map((item) => ({
+            name: item._id.charAt(0).toUpperCase() + item._id.slice(1),
+            value: item.count,
+          }));
 
-        // 4. Recent Assets (Limit 5)
-        const recentAssets = await assignedAssetsCollection
-          .find({ employeeEmail: email, status: "assigned" })
-          .sort({ assignmentDate: -1 })
-          .limit(5)
-          .toArray();
+          // 4. Recent Assets (Limit 5)
+          const recentAssets = await assignedAssetsCollection
+            .find({ employeeEmail: email, status: "assigned" })
+            .sort({ assignmentDate: -1 })
+            .limit(5)
+            .toArray();
 
-        res.send({
-          summary: {
-            totalAssigned: assignedAssets.length,
-            returnable: returnableCount,
-            nonReturnable: nonReturnableCount,
-            pending: pendingRequests,
-          },
-          pieData,
-          requestStatusData,
-          recentAssets,
-        });
-      } catch (err) {
-        console.error("Employee analytics error:", err);
-        res.status(500).send({ message: "Failed to load analytics" });
+          res.send({
+            summary: {
+              totalAssigned: assignedAssets.length,
+              returnable: returnableCount,
+              nonReturnable: nonReturnableCount,
+              pending: pendingRequests,
+            },
+            pieData,
+            requestStatusData,
+            recentAssets,
+          });
+        } catch (err) {
+          console.error("Employee analytics error:", err);
+          res.status(500).send({ message: "Failed to load analytics" });
+        }
       }
-    });
+    );
 
     // ------
   } catch (error) {
