@@ -5,7 +5,7 @@ This is the **server-side** repository for **AssetVerse**, a full-stack B2B HR a
 
 Built with Node.js, Express.js, MongoDB, and JWT for a scalable, production-ready architecture.
 
-🔗 **Live Backend URL:** `http://localhost:5000`
+🔗 **Live Backend URL:** `https://assets-vers.vercel.app`
 
 🔗 **Client Repository:** [Link to your client repo](https://github.com/fardinislamselim/Asset-Verse-client)
 
@@ -124,7 +124,7 @@ Create `.env` with your MongoDB URI, JWT secret, and Stripe keys.
 npm run dev
 ```
 
-Server will run on `http://localhost:5000`
+Server will run on `https://assets-vers.vercel.appercel.app`
 
 ### 5. Build & Start for Production
 
