@@ -106,12 +106,31 @@ async function run() {
 
     // ==================== USER APIs ====================
 
-    //  POST → Add User
+    // POST → Add/Update User (Social Login compatible)
     app.post("/users", async (req, res) => {
       const user = req.body;
-      const existing = await userCollection.findOne({ email: user.email });
-      if (existing)
-        return res.send({ message: "User exists", insertedId: null });
+      const query = { email: user.email };
+      const existing = await userCollection.findOne(query);
+
+      if (existing) {
+        // If user already exists, don't overwrite role or sensitive info
+        // but we might update name or photo if it's a social login
+        const updateDoc = {
+          $set: {
+            lastLogin: new Date(),
+          }
+        };
+        // Only update name/photo if provided and user doesn't have them (or to keep fresh)
+        if (user.name) updateDoc.$set.name = user.name;
+        if (user.photoURL) updateDoc.$set.photoURL = user.photoURL;
+
+        await userCollection.updateOne(query, updateDoc);
+        return res.send({ message: "User updated", acknowledged: true, existing: true });
+      }
+
+      // New user
+      user.createdAt = new Date();
+      user.lastLogin = new Date();
       const result = await userCollection.insertOne(user);
       res.send(result);
     });
@@ -119,6 +138,12 @@ async function run() {
     app.get("/user", verifyJWT, async (req, res) => {
       const user = await userCollection.findOne({ email: req.user.email });
       res.send(user || {});
+    });
+
+    app.get("/user-by-email/:email", async (req, res) => {
+      const email = req.params.email;
+      const user = await userCollection.findOne({ email });
+      res.send(user || null);
     });
 
     // GET → All affiliated employees for logged-in HR
@@ -590,20 +615,31 @@ async function run() {
       try {
         const search = req.query.search || "";
         const sort = req.query.sort || "";
+        const type = req.query.type || "";
+        const stock = req.query.stock || "available"; // available, all
         const page = parseInt(req.query.page) || 1;
-        const limit = parseInt(req.query.limit) || 9;
+        const limit = parseInt(req.query.limit) || 12;
         const skip = (page - 1) * limit;
 
         const query = {
-          availableQuantity: { $gt: 0 },
           productName: { $regex: search, $options: "i" },
         };
 
+        if (stock === "available") {
+          query.availableQuantity = { $gt: 0 };
+        }
+
+        if (type) {
+          query.productType = type;
+        }
+
         let sortOptions = { createdAt: -1 };
-        if (sort === "asc") {
+        if (sort === "qty-asc") {
           sortOptions = { availableQuantity: 1 };
-        } else if (sort === "desc") {
+        } else if (sort === "qty-desc") {
           sortOptions = { availableQuantity: -1 };
+        } else if (sort === "date-asc") {
+          sortOptions = { createdAt: 1 };
         }
 
         const assets = await assetCollection
@@ -618,6 +654,8 @@ async function run() {
             availableQuantity: 1,
             companyName: 1,
             hrEmail: 1,
+            dateAdded: 1,
+            createdAt: 1,
           })
           .toArray();
 
@@ -638,6 +676,8 @@ async function run() {
       }
     });
 
+    const reviewCollection = db.collection("reviews");
+
     // GET → Single Asset Details (Public)
     app.get("/assets/:id", async (req, res) => {
       const { id } = req.params;
@@ -653,6 +693,77 @@ async function run() {
         res.send(asset);
       } catch (err) {
         res.status(500).send({ message: "Failed to load asset details" });
+      }
+    });
+
+    // GET → Related Assets (Same company or same type)
+    app.get("/assets/:id/related", async (req, res) => {
+      const { id } = req.params;
+      if (!ObjectId.isValid(id)) return res.status(400).send({ message: "Invalid ID" });
+
+      try {
+        const asset = await assetCollection.findOne({ _id: new ObjectId(id) });
+        if (!asset) return res.status(404).send({ message: "Asset not found" });
+
+        const query = {
+          _id: { $ne: new ObjectId(id) },
+          availableQuantity: { $gt: 0 },
+          $or: [
+            { companyName: asset.companyName },
+            { productType: asset.productType }
+          ]
+        };
+
+        const related = await assetCollection
+          .find(query)
+          .limit(4)
+          .toArray();
+
+        res.send(related);
+      } catch (err) {
+        res.status(500).send({ message: "Failed to load related assets" });
+      }
+    });
+
+    // GET → Reviews for an asset
+    app.get("/assets/:id/reviews", async (req, res) => {
+      const { id } = req.params;
+      try {
+        const reviews = await reviewCollection
+          .find({ assetId: id })
+          .sort({ createdAt: -1 })
+          .toArray();
+        res.send(reviews);
+      } catch (err) {
+        res.status(500).send({ message: "Failed to load reviews" });
+      }
+    });
+
+    // POST → Add review (Protected)
+    app.post("/assets/:id/reviews", verifyJWT, async (req, res) => {
+      const { id } = req.params;
+      const { rating, comment } = req.body;
+      const { email, name, picture } = req.user;
+
+      if (!rating || !comment) {
+        return res.status(400).send({ message: "Rating and comment are required" });
+      }
+
+      try {
+        const newReview = {
+          assetId: id,
+          userEmail: email,
+          userName: name || email,
+          userImage: picture,
+          rating: Number(rating),
+          comment,
+          createdAt: new Date()
+        };
+
+        const result = await reviewCollection.insertOne(newReview);
+        res.status(201).send(result);
+      } catch (err) {
+        res.status(500).send({ message: "Failed to post review" });
       }
     });
 

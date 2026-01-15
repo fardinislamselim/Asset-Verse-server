@@ -5,7 +5,7 @@ This is the **server-side** repository for **AssetVerse**, a full-stack B2B HR a
 
 Built with Node.js, Express.js, MongoDB, and JWT for a scalable, production-ready architecture.
 
-🔗 **Live Backend URL:** `https://assets-vers.vercel.app`
+🔗 **Live Backend URL:** `http://localhost:5000`
 
 🔗 **Client Repository:** [Link to your client repo](https://github.com/fardinislamselim/Asset-Verse-client)
 
@@ -14,12 +14,14 @@ Built with Node.js, Express.js, MongoDB, and JWT for a scalable, production-read
 ## 🚀 Key Backend Features
 
 ### 🔐 Authentication & Authorization
+
 - JWT-based authentication middleware
 - Role verification (HR / Employee)
 - Protected routes
 - Integration with Firebase Auth UID for user identification
 
 ### 🧑‍💼 Core Business Logic
+
 - Company registration with default Basic Package (5 employees)
 - Asset CRUD operations
 - Asset request system (pending → approved/rejected)
@@ -30,16 +32,19 @@ Built with Node.js, Express.js, MongoDB, and JWT for a scalable, production-read
 - Remove employees from company
 
 ### 💳 Payment Integration
+
 - Stripe Checkout for package upgrades
 - Webhook handling for successful payments
 - Automatic package upgrade on successful payment
 
 ### 📊 Analytics Endpoints
+
 - Returnable vs Non-returnable asset counts
 - Top 5 most requested assets
 - Real-time aggregation queries
 
 ### 🛡️ Security & Performance
+
 - CORS configured for frontend origin
 - Environment-based configuration
 - Server-side pagination (`?page=&limit=`)
@@ -94,25 +99,27 @@ STRIPE_SECRET_KEY=your_stripe_secret_key
 
 ```
 
-
-
 ## 🚀 Getting Started
 
 ### 1. Clone the Repository
+
 ```bash
 git clone https://github.com/fardinislamselim/Asset-Verse-server.git
 cd assetverse-server
 ```
 
 ### 2. Install Dependencies
+
 ```bash
 npm install
 ```
 
 ### 3. Set Up Environment Variables
+
 Create `.env` with your MongoDB URI, JWT secret, and Stripe keys.
 
 ### 4. Run Development Server
+
 ```bash
 npm run dev
 ```
@@ -120,33 +127,36 @@ npm run dev
 Server will run on `http://localhost:5000`
 
 ### 5. Build & Start for Production
+
 ```bash
 npm start
 ```
 
 ## 🔗 API Endpoints Overview
 
-| Method | Endpoint                          | Description                          | Protected |
-|--------|-----------------------------------|--------------------------------------|-----------|
-| POST   | `/api/auth/login`                 | Verify Firebase token & issue JWT    | No        |
-| POST   | `/api/companies`                  | Register company (HR)                | Yes       |
-| GET    | `/api/assets`                     | List assets (with pagination)        | Yes       |
-| POST   | `/api/requests`                   | Employee requests asset              | Yes       |
-| PATCH  | `/api/requests/:id/approve`       | HR approves request                  | Yes (HR)  |
-| POST   | `/api/payments/create-checkout`   | Create Stripe checkout session       | Yes (HR)  |
-| POST   | `/api/payments/webhook`           | Stripe webhook (raw body)             | No        |
-| GET    | `/api/analytics/top-assets`       | Top requested assets                 | Yes (HR)  |
+| Method | Endpoint                        | Description                       | Protected |
+| ------ | ------------------------------- | --------------------------------- | --------- |
+| POST   | `/api/auth/login`               | Verify Firebase token & issue JWT | No        |
+| POST   | `/api/companies`                | Register company (HR)             | Yes       |
+| GET    | `/api/assets`                   | List assets (with pagination)     | Yes       |
+| POST   | `/api/requests`                 | Employee requests asset           | Yes       |
+| PATCH  | `/api/requests/:id/approve`     | HR approves request               | Yes (HR)  |
+| POST   | `/api/payments/create-checkout` | Create Stripe checkout session    | Yes (HR)  |
+| POST   | `/api/payments/webhook`         | Stripe webhook (raw body)         | No        |
+| GET    | `/api/analytics/top-assets`     | Top requested assets              | Yes (HR)  |
 
-*(Full API documentation can be added with Swagger/Postman if needed)*
+_(Full API documentation can be added with Swagger/Postman if needed)_
 
 ## 🚀 Deployment
 
 Recommended platforms:
+
 - **Render** (free tier available)
 - **Railway**
 - **Railway + MongoDB Atlas**
 
 Steps:
+
 1. Connect repo
 2. Add all environment variables
 3. Set start command: `node src/server.js` or `npm start`
@@ -155,10 +165,10 @@ Steps:
 ## 🧪 Test Credentials (HR)
 
 Use the frontend to register/login. Seed data should include:
+
 - HR: `hr-1@assetsvers.com` (role: "hr")
 
 ## 🧑‍🤝‍🧑 Contributor
 
 - **Your Name** – Full-Stack Developer  
   GitHub: [https://github.com/fardinislamselim](https://github.com/fardinislamselim)
-
